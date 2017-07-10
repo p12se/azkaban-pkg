@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+
+# Location of the source code
+WORKSPACE=${WORKSPACE:-"$(cd "$(dirname "$0")/.." && pwd -P)"}
+
+
+function validate_version(){
+  [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+-*.*$ ]] || {
+    echo "Error: version is undefined or has invalid format: ${1}" >&2
+    return 1
+  }
+}
+
+# Describe a commit using the most recent tag reachable from it
+# See: https://git-scm.com/docs/git-describe
+function git_version(){
+  local ws=$(test -n "$1" && echo "--git-dir=${1}/.git")
+  local prefix=$(test -n "$2" && echo "${2}-")
+
+  # Get latest tag for current branch and number of ahead commits
+  local tag=$(git $ws describe --tags --match=${prefix}* | sed -n "s/${prefix}\(.*\)/\1/p") #"
+  [[ $tag =~ ^[0-9]+\.[0-9]+\.[0-9]+-*.*$ ]] || {
+    echo "Error: Git tag is not set or has invalid format: ${prefix}${tag}" >&2
+    return 1
+  }
+  printf ${tag}
+}
+
+function cr_git_version(){
+  local ws=$(test -n "$1" && echo "--git-dir=./azkaban/.git")
+  local prefix=$(test -n "$2" && echo "${2}-")
+  # Get latest tag for current branch and number of ahead commits
+  pushd ./azkaban >> /dev/null
+    local tag=$(git symbolic-ref -q --short HEAD || git describe --tags --exact-match) #"
+  popd >> /dev/null
+  [[ $tag =~ ^[0-9]+\.[0-9]+\.[0-9]+-*.*$ ]] || {
+    echo "Error: Git tag is not set or has invalid format: ${prefix}${tag}" >&2
+    return 1
+  }
+  printf ${tag}
+}
+
+
+# Get a version of a root composer package.
+# See: https://getcomposer.org/doc/04-schema.md#version
+function composer_version(){
+  local ws="${1:-$WORKSPACE}"
+
+  command -v php > /dev/null || {
+    echo "Error: php cli was not found" >&2
+    return 1
+  }
+
+  test -r "$ws/composer.phar" || {
+    echo "Error: composer.phar was not found" >&2
+    return 2
+  }
+
+  pushd $ws >/dev/null
+    php composer.phar info --self | sed -n 's/versions\s*:[^0-9]*\(.*\)$/\1/p'
+  popd >/dev/null
+}
+
+
+# Get version from maven pom.xml.
+function pom_version(){
+  local ws="${1:-$WORKSPACE}"
+
+  command -v mvn > /dev/null || {
+    echo "Error: maven is required but it was not found" >&2
+    return 1
+  }
+
+  mvn -q -Dexec.executable="echo" -Dexec.args='${project.version}' \
+      --non-recursive org.codehaus.mojo:exec-maven-plugin:1.3.1:exec \
+      -f $ws/backend/pom.xml
+}
+
+
+function compose_rpm_version(){
+  local ws="${1:-$WORKSPACE}" release=()
+  local gv=$(git_version $ws) cv=$(pom_version $ws)
+
+  validate_version $cv || return $?
+  # Extract revision from git and composer versions
+  local gva=(${gv//-/ }) cva=(${cv//-/ })
+
+  if [ ${#gva[*]} -gt 1 ] && [[ ${gva[-2]} =~ ^[0-9]+$ ]]; then
+    # Pre-release without any tag
+    release+=("0" "${gva[-2]}")
+    gva=( ${gva[@]/${gva[-2]}} )
+  elif [ "$gv" != "$cv" ]; then
+    echo "Error: The tagged version of the last commit differs from composer version, $gv vs $cv" >&2
+    return 10
+  else
+    # Pre-release with same git tag
+    release+=("0")
+  fi
+
+  release+=(${cva[@]:1} ${gva[@]:1})
+  release=$(printf ".%s" ${release[@]})
+  if [ -z ${release} ]; then
+    echo ${cva[0]} 1
+  else
+    echo ${cva[0]} ${release:1}
+  fi
+}
+
+V_SOURCE=$1; shift
+${V_SOURCE}_version $WORKSPACE $@
+

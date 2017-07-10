@@ -1,0 +1,21 @@
+[Unit]
+Description=Azkaban Workflow Executor
+After=network.target
+
+[Service]
+Type=simple
+User=${AZ_SVC_OWNER}
+Group=${AZ_SVC_OWNER}
+WorkingDirectory=${AZ_SVC_HOME}
+;PIDFile=${AZ_SVC_HOME}/currentpid
+
+ExecStart=${AZ_SVC_HOME}/bin/${AZ_SVC_NAME}-start.sh
+ExecStop=${AZ_SVC_HOME}/bin/${AZ_SVC_NAME}-shutdown.sh
+
+Restart=on-failure
+RestartSec=15
+
+SyslogIdentifier=${AZ_SVC_NAME}
+
+[Install]
+WantedBy=multi-user.target

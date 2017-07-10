@@ -1,0 +1,3 @@
+[submodule "azkaban"]
+	path = azkaban
+	url = git@github.com:azkaban/azkaban.git
